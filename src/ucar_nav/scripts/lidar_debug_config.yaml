@@ -1,0 +1,24 @@
+
+    header.frame_id : "laser_frame"
+    angle_min : -3.1415926
+    angle_max : 3.1415926
+    angle_increment : 0.0174532922  # 1 度的分辨率
+    time_increment  : 0.0
+    scan_time : 0.1
+    # 是否启用随机生成点云，否则使用固定点云数据
+    is_random_pointcloud : false
+    range_min : 1.5  #生成点云的最小距离，应该大于point_reach_min
+    range_max : 2   #生成点云的最大距离，应该小于point_reach_max
+
+    #雷达算法取点范围
+    point_reach_max : 4
+    point_reach_min : 2
+    num_points : 20
+    max_consecutive_distance : 0.1 #找板连续点最小间隔
+    #航点参数
+    ideal_distance_with_board : 0.3 #计算出的航点距离板子的垂直距离
+
+    #找板算法滤波参数
+    tolorance_distance : 0.05
+
+

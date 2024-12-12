@@ -1,11 +1,3 @@
-#!/usr/bin/env python
-#-*- coding: utf-8 -*-
-"""
-PID Trace test node
-@yjy
-11/27
-"""
-
 import rospy
 import yaml
 from geometry_msgs.msg import Twist   
@@ -23,7 +15,7 @@ else :TIMEOUT = False
 NONGOAL = 0
 GOAL_BUT_NOT_TARGET = 1
 FIND_BUT_NOT_ALLIGN = 3
-FIND =4
+FIND = 4
 
 class PID_BoardTrace_Controller(object):
     def __init__(self):
@@ -35,22 +27,28 @@ class PID_BoardTrace_Controller(object):
                 config = yaml.safe_load(file)
         except FileNotFoundError:
             rospy.logerr("yaml参数文件不存在!")
-        except Exception :
-            rospy.logerr("yaml参数文件读取失败!{Exception}")
+        except Exception as e:
+            rospy.logerr(f"yaml参数文件读取失败! {e}")
 
-        #pid velocity param
+        # PID velocity param
         self.align_tomid_velocity = config['align_tomid_velocity']
         self.find_target_velocity = config['find_target_velocity']
-        #time out check param
-        self.timeout_duration_tomid = config['timeout_duration_tomid']
-        self.timeout_duration_find_target = config['timeout_duration_find_target']
+        pid_param = config['tomid_pid_param']
+        self.kp_tomid = pid_param[0]  # 添加 kp 参数
+        self.ki_tomid = pid_param[1]  # 添加 ki 参数
+        self.kd_tomid = pid_param[2]  # 添加 kd 参数
+        # time out check param
+        self._timeout_duration_tomid = config['timeout_duration_tomid']
+        self._timeout_duration_find_target = config['timeout_duration_find_target']
         '''
         ros服务参数
         '''
-        self.pub = rospy.Publisher('cmd_vel', Twist, queue_size=1)#cmd_vel发布底盘控制命令
-        #ideal guide param 从参数服务器中获取
-        self.ideal_tomid = rospy.get_param('ideal_tomid',0.001)  # ~[0,1] 理想中心到目标点直线的距离(归一化)
+        self.pub = rospy.Publisher('cmd_vel', Twist, queue_size=1)  # cmd_vel发布底盘控制命令
+        # ideal guide param 从参数服务器中获取
+        self.ideal_tomid = rospy.get_param('ideal_tomid', 0.001)  # ~[0,1] 理想中心到目标点直线的距离(归一化)
         self.start_time = rospy.Time.now().to_sec()
+        self.integral = 0.0  # 积分项
+        self.previous_error = 0.0  # 上一次的误差
 
         log_info = (
             f"PID Trace node start!\n"
@@ -59,15 +57,16 @@ class PID_BoardTrace_Controller(object):
         )
         rospy.loginfo(log_info)
 
-    def check_timeout(self,duration):
+    def check_timeout(self, duration):
         """
         :param duration: 超时时间
-        :return:null
+        :return: null
         :raise: TimeoutException
         """
         if rospy.Time.now().to_sec() - self.start_time > duration:
             raise TimeoutError(f"Timeout! Duration: {duration}")
-    def convert_twist(self,x, y,z):
+
+    def convert_twist(self, x, y, z):
         """
         :param x: x 线速度
         :param y: y 线速度
@@ -107,24 +106,33 @@ class PID_BoardTrace_Controller(object):
             rospy.logerr("rescue_x参数不存在!")
             exit(1)
         
-    # 确保 tomid 在合理范围内
-        if not (0 <= tomid <= self.max_tomid):
+        # 确保 tomid 在合理范围内
+        if not (-0.5 <= tomid <= 0.5):
             rospy.logerr("tomid 值超出范围: {}".format(tomid))
             return False
 
-        #归一化tomid ~norm_tomid~[-1,1]
+        # 归一化tomid ~norm_tomid~[-1,1]
         norm_tomid = tomid / 0.5
 
-        if abs(norm_tomid) > self.ideal_tomid:#未对齐   
-            #pid 控制速度
-            pid_velocity_y = - self.align_tomid_velocity * norm_tomid
-            self.pub.publish(self.convert_twist(0, pid_velocity_y,0))
+        if abs(norm_tomid) > self.ideal_tomid:  # 未对齐   
+            # pid 控制速度
+            error = norm_tomid
+            self.integral += error
+            derivative = error - self.previous_error
+            self.previous_error = error
+
+            pid_velocity_y =    -      (self.kp_tomid * error + self.ki_tomid * self.integral 
+                                                        + self.kd_tomid * derivative)
+            self.pub.publish(self.convert_twist(0, pid_velocity_y, 0))
             
             if DEBUG_MODE:
                 rospy.loginfo(f"pid_velocity_y:{pid_velocity_y},tomid:{tomid}")
             return False
-        else :  #对齐
-            self.pub.publish(self.convert_twist(0, 0,0))
+        else:  # 对齐
+            self.pub.publish(self.convert_twist(0, 0, 0))
+            # 重置积分项和上一次的误差
+            self.integral = 0.0
+            self.previous_error = 0.0
 
             if DEBUG_MODE:
                 rospy.logerr("已经对齐")
@@ -135,17 +143,17 @@ if __name__ == '__main__' and DEBUG_MODE:
         rospy.init_node('PID_BoardTrace_Controller')
         pid_controller = PID_BoardTrace_Controller()
         
-        #寻找目标
-        pid_controller.start_time = rospy.Time.now().to_sec()#记录开始时间
-        while(not pid_controller.find_target()
-              ): 
-                if TIMEOUT:pid_controller.check_timeout(pid_controller.timeout_duration_find_target)
+        # 寻找目标
+        pid_controller.start_time = rospy.Time.now().to_sec()  # 记录开始时间
+        while not pid_controller.find_target():
+            if TIMEOUT:
+                pid_controller.check_timeout(pid_controller.timeout_duration_find_target)
 
-        #对齐
-        pid_controller.start_time = rospy.Time.now().to_sec()#记录开始时间
-        while(not pid_controller.pub_tomid_velocity()
-                ):
-                if TIMEOUT:pid_controller.check_timeout(pid_controller.timeout_duration_find_target)
+        # 对齐
+        pid_controller.start_time = rospy.Time.now().to_sec()  # 记录开始时间
+        while not pid_controller.pub_tomid_velocity():
+            if TIMEOUT:
+                pid_controller.check_timeout(pid_controller.timeout_duration_tomid)
         
     except TimeoutError:
         rospy.signal_shutdown("超时!")

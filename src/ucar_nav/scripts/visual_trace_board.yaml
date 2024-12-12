@@ -1,0 +1,6 @@
+#pid velocity param
+align_tomid_velocity : 0.3    #y向对齐目标点距离中心的距离
+find_target_velocity : 0.1 #自转寻找目标的速度
+#time out check param
+timeout_duration_tomid : 20 #对齐中心点超时时间  /s
+timeout_duration_find_target : 60 #自转寻找目标超时时间/s

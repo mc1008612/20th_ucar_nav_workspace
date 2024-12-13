@@ -6,3 +6,4 @@ timeout_duration_tomid : 20 #对齐中心点超时时间  /s
 timeout_duration_find_target : 60 #自转寻找目标超时时间/s
 #pid调整参数
 tomid_pid_param : [0.5,-0.03,-0.02]     #y轴pid参数
+tomid_change_rate: 0.5 #视觉返回tomid速率，单位Hz

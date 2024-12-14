@@ -3,25 +3,50 @@ import yaml
 from geometry_msgs.msg import Twist   
 import sys
 
-sys.argv.append('debug')
-sys.argv.append('no_timeout')
-if sys.argv[1] == 'debug':
-    DEBUG_MODE = True
-else :DEBUG_MODE = False
-if sys.argv[2] == 'timeout':
-    TIMEOUT = True      
-else :TIMEOUT = False   
-
 NONGOAL = 0
+"""@const:NONGOAL:未找到目标"""
 GOAL_BUT_NOT_TARGET = 1
+"""@const:GOAL_BUT_NOT_TARGET:找到目标，但未对齐"""
 FIND_BUT_NOT_ALLIGN = 3
-FIND = 4
+"""@const:FIND_BUT_NOT_ALLIGN:找到目标，但未对齐"""
+FIND = 4 
+"""@const:FIND:找到目标，对齐"""
 
-class PID_BoardTrace_Controller(object):
+
+
+"""
+@Description:配置DEBUG与TIMEOUT测试模式
+"""
+
+if len(sys.argv) < 2:
+    sys.argv.append('debug')  # 默认为debug模式
+if len(sys.argv) < 3:
+    sys.argv.append('no_timeout')  # 默认不开启timeout模式
+
+arg1 = sys.argv[1]
+arg2 = sys.argv[2]
+
+valid_modes = {'debug', 'no_debug'}
+valid_timeouts = {'timeout', 'no_timeout'}
+
+if arg1 not in valid_modes:
+    raise ValueError(f"无效的参数 {arg1}, 请使用 'debug' 或 'no_debug'")
+
+if arg2 not in valid_timeouts:
+    raise ValueError(f"无效的参数 {arg2}, 请使用 'timeout' 或 'no_timeout'")
+
+DEBUG_MODE = arg1 == 'debug' 
+TIMEOUT = arg2 == 'timeout'
+
+class PID_BoardTrace_Controller(object):     
     def __init__(self):
-        '''
-        从yaml初始化控制器参数
-        '''
+        """
+        @Description:PID_BoardTrace_Controller 节点
+        @Fuction: 创建pid控制器,实现对目标板的位置追踪
+        @Author:   yjy
+        @Version:  1.0
+        @Modify:   2024.12.15
+        """
         try:
             with open('/home/ucar/ucar_ws/src/ucar_nav/scripts/visual_trace_board.yaml', 'r') as file:
                 config = yaml.safe_load(file)
@@ -30,20 +55,27 @@ class PID_BoardTrace_Controller(object):
         except Exception as e:
             rospy.logerr(f"yaml参数文件读取失败! {e}")
 
-        # PID velocity param
+        # PID 控制器参数
         self.find_target_velocity = config['find_target_velocity']
+        """@const:yaml:自转寻找目标最大速度"""
         pid_param = config['tomid_pid_param']
-        self.kp_tomid = pid_param[0]  # 添加 kp 参数
-        self.ki_tomid = pid_param[1]  # 添加 ki 参数
-        self.kd_tomid = pid_param[2]  # 添加 kd 参数
-        # time out check param
+        """@const:yaml:PID参数list[kp,ki,kd]"""
+        self.kp_tomid = pid_param[0] 
+        """@const:yaml:kp参数"""
+        self.ki_tomid = pid_param[1]  
+        """@const:yaml:ki参数"""
+        self.kd_tomid = pid_param[2]
+        """@const:yaml:kd参数"""  
+        # 时间校验的参数
         self.timeout_duration_tomid = config['timeout_duration_tomid']
+        """@const:yaml:目标追踪时间，超过则超时"""
         self.timeout_duration_find_target = config['timeout_duration_find_target']
-        #tomid刷新率
+        """@const:yaml:自转寻找目标时间，超过则超时"""
         self.tomid_fresh_period = config['tomid_fresh_period']
+        """@const:yaml:tomid刷新周期"""
 
         '''
-        ros服务参数
+        @Description:ros服务参数
         '''
         self.pub = rospy.Publisher('cmd_vel', Twist, queue_size=1)  # cmd_vel发布底盘控制命令
         # ideal guide param 从参数服务器中获取
@@ -69,7 +101,7 @@ class PID_BoardTrace_Controller(object):
         """
         :param duration: 超时时间
         :return: null
-        :raise: TimeoutException
+        :raise: TimeoutError
         """
         if rospy.Time.now().to_sec() - self.start_time > duration:
             raise TimeoutError(f"Timeout! Duration: {duration}")
@@ -88,24 +120,20 @@ class PID_BoardTrace_Controller(object):
         return twist
     
     def find_target(self):
-
+        """
+        @Describe: 寻找目标板
+        @Returns: bool,如果找到目标返回True,否则返回False
+        @raises: ValueError 如果rescue的值不正确
+        """
         rescue_status = rospy.get_param('rescue', NONGOAL)
 
-        if (rescue_status == FIND or 
-            rescue_status == FIND_BUT_NOT_ALLIGN):  # 找到目标
-                
-                self.pub.publish(self.convert_twist(0, 0, 0))
+        if rescue_status in (FIND,FIND_BUT_NOT_ALLIGN):  # 找到目标
                 return True          
-        elif (rescue_status == NONGOAL or
-            rescue_status == GOAL_BUT_NOT_TARGET):  # 没有找到目标
-                
+        elif rescue_status in (NONGOAL,GOAL_BUT_NOT_TARGET):  # 没有找到目标  
                 self.pub.publish(self.convert_twist(0, 0, self.find_target_velocity))
                 return False
         else :
-
-            rospy.signal_shutdown("错误的rescue码值")
-            exit(1)
-
+            raise ValueError("错误的rescue码值")
 
     def tomid_sample_timer_callback(self,event):
         """
@@ -126,11 +154,11 @@ class PID_BoardTrace_Controller(object):
             if self.rescue_status == NONGOAL:
                 raise Exception
         except rospy.ROSException:
-            rospy.logerr("rescue_x 参数不存在!")
+            rospy.logerr("rescue_x 参数不存在!")                                   #程序出口:参数不存在
             return
         except Exception:
-            rospy.logerr("LOST")
-            return                                                                                        #程序出口:参数不存在
+            rospy.logerr("LOST")                                                                    #程序出口:目标从视野内丢失
+            return                                                                                        
 
         # 确保 self.tomid 在合理范围内 (-0.5 到 0.5)
         if not (-0.5 <= tomid <= 0.5):
@@ -199,15 +227,18 @@ if __name__ == '__main__' and DEBUG_MODE:
 
         # 对齐
         pid_controller.start_time = rospy.Time.now().to_sec()  # 记录开始时间
-        pid_controller.tomid_sample_timer._shutdown = False
+        pid_controller.tomid_sample_timer._shutdown = False#计时器开始开火
         if TIMEOUT:
-            while(not pid_controller.check_timeout(pid_controller.timeout_duration_tomid)):
+            while not pid_controller.check_timeout(pid_controller.timeout_duration_tomid):
                 pass
         rospy.spin()
 
     except TimeoutError:
         rospy.signal_shutdown("超时!")
-        exit(1)
+        sys.exit()
     except KeyboardInterrupt:  
-        rospy.signal_shutdown("PID BoardTrace Controller node terminated!")
-        exit(2)
+        rospy.signal_shutdown("PID BoardTrace Controller节点终止!")
+        sys.exit()
+    except Exception as e:
+        rospy.signal_shutdown("未知错误:{e}")
+        sys.exit()

@@ -16,7 +16,7 @@
     num_points : 20
     max_consecutive_distance : 0.1 #找板连续点最小间隔
     #航点参数
-    ideal_distance_with_board : 0.3 #计算出的航点距离板子的垂直距离
+    ideal_distance_with_board : 1 #计算出的航点距离板子的垂直距离
 
     #找板算法滤波参数
     tolorance_distance : 0.05

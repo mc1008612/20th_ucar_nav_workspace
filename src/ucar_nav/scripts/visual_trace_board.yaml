@@ -1,8 +1,9 @@
 #pid velocity param
-find_target_velocity : 0.1 #自转寻找目标的速度
+find_target_velocity : 0.3 #自转寻找目标的速度
 #time out check param
 timeout_duration_tomid : 20 #对齐中心点超时时间  /s
 timeout_duration_find_target : 60 #自转寻找目标超时时间/s
 #pid调整参数
-tomid_pid_param : [0.1,0,0]     #y轴pid参数
-tomid_fresh_period: 10 #视觉返回tomid周期,单位s
+tomid_pid_param : [0.15,0,0]     #y轴pid参数
+tomid_fresh_period: 3 #视觉返回tomid,s
+ideal_tomid: 0.03

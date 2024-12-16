@@ -286,7 +286,7 @@ class LidarCloudVelocityPub:
             # 计算法向量
             normalize_boradVertical_vector = self.get_normalized_normal_vector(a)
             # 转换为四元数
-            angle = np.arccos(normalize_boradVertical_vector[0])
+            angle = np.arccos(normalize_boradVertical_vector[0]) * normalize_boradVertical_vector[1]/abs(normalize_boradVertical_vector[1])
             print(f"角度: {angle/np.pi*180}")
             board_orinetaion =  self.angle_to_quaternion(angle)
             print(f"四元数: {board_orinetaion}")

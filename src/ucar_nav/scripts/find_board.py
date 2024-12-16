@@ -11,7 +11,7 @@
 import rospy
 import actionlib
 from move_base_msgs.msg import MoveBaseAction, MoveBaseGoal
-from geometry_msgs.msg import PoseStamped
+from geometry_msgs.msg import PoseStamped,Point,Quaternion
 from actionlib_msgs.msg import GoalStatus
 
 import os
@@ -57,27 +57,26 @@ if __name__ == '__main__':
         """
         @description:引入pid控制器,预先对齐
         """
-        pid_controller = pid_trace.PID_BoardTrace_Controller()
-        #寻找目标
-        pid_controller.start_time = rospy.Time.now().to_sec()  # 记录开始时间
-        while not pid_controller.find_target():
-                pid_controller.check_timeout(pid_controller.timeout_duration_find_target)
-
-        # 对齐
-        pid_controller.start_time = rospy.Time.now().to_sec()  # 记录开始时间
-        try:
-            rospy.Timer(rospy.Duration(pid_controller.tomid_fresh_period), pid_controller.tomid_sample_timer_callback)
-            while(not pid_controller.check_timeout(pid_controller.timeout_duration_tomid)):
-                pass
-        except KeyboardInterrupt:
-            #正常退出    
-            """
-            @description:雷达点云拟合 移动到目标点
-            """ 
-            lidar_cloud_velocity_pub. main()
-        rospy.spin()  # 可选，用于保持节点运行并处理回调等（在这个简单脚本中可能不是必需的）
+        pid_controller = pid_trace.PID_BoardTrace_Controller(debug_mode=False,timeout=True)
+        pid_controller.run()
+        """
+        @description:雷达点云拟合 移动到目标点
+        """ 
+        lidar_cloud_processer = lidar_cloud_velocity_pub.LidarCloudVelocityPub(debug_mode=False,plot=False)
+        lidar_cloud_processer.run()
+        """
+        @description:订阅雷达点云拟合出的目标点与姿态方向，移动到目标点
+        """
+        target_pose = PoseStamped()
+        #等待目标点发布
+        target_pose = rospy.wait_for_message("target_board_point", PoseStamped, timeout=5)
+        move_to_pose(target_pose)
+        rospy.spin()
+    except rospy.ROSException:  
+        rospy.signal_shutdown("雷达点云拟合目标点丢失!")
+        exit(1)
     except TimeoutError:
-        rospy.signal_shutdown("超时!")
+        rospy.signal_shutdown("对齐超时!")
         exit(1)
     except KeyboardInterrupt:  
         rospy.signal_shutdown("PID BoardTrace Controller node terminated!")

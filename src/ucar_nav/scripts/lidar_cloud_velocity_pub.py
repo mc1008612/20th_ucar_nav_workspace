@@ -6,6 +6,7 @@ from sklearn.linear_model import RANSACRegressor
 import sys
 import os
 import yaml
+from geometry_msgs.msg import PoseStamped,Quaternion
 
 class LidarCloudVelocityPub:
     """
@@ -195,7 +196,30 @@ class LidarCloudVelocityPub:
 
             plt.show()
 
+    def angle_to_quaternion(self,a)->Quaternion:
+        """
+        根据绕 Z 轴旋转的角度 a 计算四元数。
+        :param a: 旋转角度（单位：rad）
+        :return: 四元数Quaternion ( x, y, z,w)
+        """
+        # 定义旋转轴（Z 轴）
+        RAxis = np.array([0, 0, 1])
+        
+        # 计算角度的半角
+        theta = (a / 2) 
+        
+        # 计算四元数的各个分量
+        w = np.cos(theta)
+        x = RAxis[0] * np.sin(theta)
+        y = RAxis[1] * np.sin(theta)
+        z = RAxis[2] * np.sin(theta)
+        
+        return Quaternion(x, y, z, w)
+
     def run(self):
+        """
+        程序入口点。
+        """
         if not self.DEBUG_MODE:
                 rospy.init_node('scan_subscriber')
                 while not rospy.get_param('nav_status', '') == 'LIDAR_FIND':
@@ -261,6 +285,11 @@ class LidarCloudVelocityPub:
 
             # 计算法向量
             normalize_boradVertical_vector = self.get_normalized_normal_vector(a)
+            # 转换为四元数
+            angle = np.arccos(normalize_boradVertical_vector[0])
+            print(f"角度: {angle/np.pi*180}")
+            board_orinetaion =  self.angle_to_quaternion(angle)
+            print(f"四元数: {board_orinetaion}")
 
             #根据拟合直线推算板子
             board_points = []
@@ -292,8 +321,20 @@ class LidarCloudVelocityPub:
                                  self.point_reach_max, normalize_boradVertical_vector)
 
             if not self.DEBUG_MODE:#发布导航点参数
-                rospy.set_param('target_board_point', target_point)
-                rospy.set_param("target_board_pose_vector",normalize_boradVertical_vector)
+                point_piblisher = rospy.Publisher('target_board_point', PoseStamped, queue_size=1)
+                target_board_point = PoseStamped()
+                target_board_point.header.frame_id = 'base_link'
+                target_board_point.pose.position.x = target_point[0]
+                target_board_point.pose.position.y = target_point[1]
+                #normalize_boradVertical_vector = [cos(angle),sin(angle)]
+                #RAxis = [0,0,1]绕着z轴旋转
+                # q.w=cos((a/2)*pi/180)
+                # q.x=RAix.x*sin((a/2)*pi/180)
+                # q.y=RAix.y*sin((a/2)*pi/180)
+                # q.z=RAix.z*sin((a/2)*pi/180)
+                target_board_point.pose.orientation = board_orinetaion
+                #发布航点参数
+                point_piblisher.publish(target_board_point)
                 #更新导航参数状态
                 rospy.set_param('nav_status','LIDAR_FOUND')
             # 程序出口

@@ -200,6 +200,10 @@ class PID_BoardTrace_Controller:
             self.pub.publish(self.convert_twist(0, pid_output_velocity_y, 0))
 
     def run(self):
+        """
+        @Description: 程序入口函数
+        @Returns: null
+        """
         try:
             rospy.init_node('PID_BoardTrace_Controller')
             self.start_time_stamp = rospy.Time.now().to_sec()  # 记录开始时间

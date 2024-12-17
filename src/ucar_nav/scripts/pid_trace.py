@@ -1,7 +1,8 @@
+import os
+
 import rospy
 import yaml
 from geometry_msgs.msg import Twist
-import os
 
 #临时状态码，下次和导航配合起来后删除
 NONGOAL = 0
@@ -15,11 +16,10 @@ class PID_BoardTrace_Controller:
     @description: 自转动寻找目标点，视觉pid对正目标点，并控制底盘移动到目标点
     @return: 发布'nav_status'参数判断状态
     """
-    def __init__(self,config_file_path=os.path.join(os.path.dirname(__file__), 'visual_trace_board.yaml'), debug_mode=False,timeout=False):
+    def __init__(self,config_file_path=os.path.join(os.path.dirname(__file__), 'visual_trace_board.yaml'), timeout=False):
         """
        @description: 自转动寻找目标点，视觉pid对正目标点，并控制底盘移动到目标点
         @param: config_file_path: 配置文件路径
-        @param: debug_mode: 是否开启调试模式
         @param: timeout: 是否开启超时退出
         @return: 发布'nav_status'参数判断状态
         NOTE: nav_status:
@@ -79,7 +79,7 @@ class PID_BoardTrace_Controller:
         rospy.loginfo(log_info)
 
         self.TIMEOUT = timeout
-        self.timer = None
+        self.timer:rospy.Timer = None 
 
     def check_timeout(self, duration):
         """
@@ -116,8 +116,8 @@ class PID_BoardTrace_Controller:
             self.pub.publish(self.convert_twist(0, 0, self.find_target_velocity))
             return False
         else:
-            rospy.signal_shutdown("错误的rescue码值")
-            exit(1)
+            rospy.logerr("错误的rescue码值")
+            raise ValueError
 
     def tomid_sample_timer_callback(self, event):
         """
@@ -137,6 +137,10 @@ class PID_BoardTrace_Controller:
             self.rescue_status = rospy.get_param('rescue')
             if self.rescue_status == NONGOAL:
                 raise Exception
+            if self.rescue_status == FIND:
+                rospy.logwarn('had FIND')
+                self.stop()#had FIND
+                return
         except rospy.ROSException:
             rospy.logerr("rescue_x 参数不存在!") # 程序出口:参数不存在
             return
@@ -156,7 +160,7 @@ class PID_BoardTrace_Controller:
         # 归一化 self.tomid 到 [-1, 1]
         normalized_tomid = tomid / 0.5  # tomid合理，使用值进行控制更新
 
-        # 检查是否对齐
+        # 检查是否对齐&FIND
         if abs(normalized_tomid) <= self.ideal_tomid:
             self.pub.publish(self.convert_twist(0, 0, 0))  # 停车
             # 重置积分项和上一次的误差
@@ -165,6 +169,7 @@ class PID_BoardTrace_Controller:
             rospy.set_param('nav_status', 'ALIGN')#设置状态参数为对齐
             rospy.set_param('nav_status','LIDAR_FIND')
             self.stop()# 程序唯一出口:对齐
+            return
 
         # 未对齐：                                                                                                   对delta_y进行pid
 
@@ -183,14 +188,16 @@ class PID_BoardTrace_Controller:
             # 只在速度小于0.1时,做时间控制补偿增量输出
             # param: pid_output_velocity_y_time
             """
-            pid_output_velocity_y_time = (abs(pid_output_velocity_y) / 0.1) * self.tomid_fresh_period
+            pid_output_velocity_y_time = (abs(pid_output_velocity_y) / 0.1) * self.tomid_fresh_period/1.5
             # 将发布时间速度置回+-0.1
-            pid_output_velocity_y = 0.1 * pid_output_velocity_y / abs(pid_output_velocity_y)
-
+            if not pid_output_velocity_y ==0:
+                pid_output_velocity_y = 0.1 * pid_output_velocity_y / abs(pid_output_velocity_y)
+            else:
+                pid_output_velocity_y  = 0
+                rospy.logerr('aligned')
         else:  # pid速度大于0.1的情况:跑满整个间隔
             pid_output_velocity_y_time = self.tomid_fresh_period
 
-        # DEBUG调试终端显示
         rospy.loginfo(f"pid_output_velocity_y: {pid_output_velocity_y}, "
                         f"time:{pid_output_velocity_y_time}, \t tomid: {tomid}")
 
@@ -203,39 +210,30 @@ class PID_BoardTrace_Controller:
         """
         @Description: 程序入口函数
         @Returns: null
+        @raise:TimeoutError 
+                ValueError
         """
-        try:
-            rospy.init_node('PID_BoardTrace_Controller')
-            self.start_time_stamp = rospy.Time.now().to_sec()  # 记录开始时间
+        self.start_time_stamp = rospy.Time.now().to_sec()  # 记录开始时间
 
-            # 阻塞寻找目标
-            while not self.find_target():
-                if self.TIMEOUT:
-                    self.check_timeout(self.timeout_duration_find_target)
+        # 阻塞寻找目标
+        while not self.find_target():
+            if self.TIMEOUT:
+                self.check_timeout(self.timeout_duration_find_target)
 
-            # 对齐
-            self.start_time_stamp = rospy.Time.now().to_sec()  # 记录开始时间
-            self.timer = rospy.Timer(rospy.Duration(self.tomid_fresh_period), self.tomid_sample_timer_callback)
-            rospy.spin()
-
-        except TimeoutError:
-            rospy.signal_shutdown("超时!")
-            exit(1)
-        except KeyboardInterrupt:
-            rospy.signal_shutdown("PID BoardTrace Controller node terminated!")
-            exit(2)
+        # 对齐
+        self.start_time_stamp = rospy.Time.now().to_sec()  # 记录开始时间
+        self.timer = rospy.Timer(rospy.Duration(self.tomid_fresh_period), self.tomid_sample_timer_callback)
 
     def stop(self):
         """
         @Description: 程序退出函数,关闭定时器
         @Returns: null
         """
-        if self.timer:
+        if self.timer.is_alive:
             self.timer.shutdown()
-        rospy.signal_shutdown("PID BoardTrace Controller node terminated!")
-        exit(2)
 
 
 if __name__ == '__main__':
+    rospy.init_node('PID_BoardTrace_Controller')
     controller = PID_BoardTrace_Controller()
     controller.run()

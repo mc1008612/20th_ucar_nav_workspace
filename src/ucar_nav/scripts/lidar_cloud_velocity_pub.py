@@ -12,6 +12,7 @@ class LidarCloudVelocityPub:
     """
     激光雷达数据处理类，用于找板坐标
     @return: 发布'nav_status'参数判断状态
+    @NOTE:如果出现文件操作上的错误，或者传感器数据为空，则程序会退出，是正常现象。
     """
     def __init__(self, config_file_path=os.path.join(os.path.dirname(__file__), 'lidar_debug_config.yaml'), debug_mode=False):
         """
@@ -26,8 +27,8 @@ class LidarCloudVelocityPub:
         发布:LIDAR_FOUND，发布'nav_status'为'LIDAR_FOUND'，表示激光雷达已经找到目标点
         ERROR 发布'nav_status'为'ERROR'，表示程序出错
         接受:LIDAR_FIND，接受'nav_status'为'LIDAR_FIND'，表示需要激光雷达寻找目标点
-
         @return self.target_board_point ->PoseStamped
+        @raise: rospy.ROSException 
         """
         self.DEBUG_MODE = debug_mode
         self.config_file_path = config_file_path
@@ -229,6 +230,7 @@ class LidarCloudVelocityPub:
     def run(self):
         """
         程序入口点。
+        如果出现文件操作上的错误，或者传感器数据为空，则程序会退出，是正常现象。
         """
         if not self.DEBUG_MODE:
             while not rospy.get_param('nav_status', '') == 'LIDAR_FIND':
@@ -290,7 +292,7 @@ class LidarCloudVelocityPub:
             print("提取的点数不足，无法拟合直线。")
             if not self.DEBUG_MODE:
                 rospy.set_param('nav_status', 'ERROR')  # 程序出口
-            sys.exit(1)
+                raise rospy.ROSException
 
 
         # 根据拟合直线推算板子
@@ -314,7 +316,7 @@ class LidarCloudVelocityPub:
 
         if self.board_points.size == 0:
             print("未找到符合要求的点，无法确定板子的中心点。")
-            sys.exit(1)
+            raise rospy.ROSException
         else:#计算中心点
             self.center_point = np.mean(self.board_points, axis=0)
 
@@ -342,7 +344,7 @@ class LidarCloudVelocityPub:
             # q.y=RAix.y*sin((a/2)*pi/180)
             # q.z=RAix.z*sin((a/2)*pi/180)
             rospy.set_param('nav_status', 'LIDAR_FOUND')
-            self.target_board_point.pose.orientation = board_orinetaion
+            self.target_board_point.pose.orientation =  board_orinetation
             # 更新导航参数状态
 
 if __name__ == '__main__':

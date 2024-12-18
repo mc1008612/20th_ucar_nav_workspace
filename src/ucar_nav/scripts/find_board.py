@@ -1,18 +1,20 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
+@auther: yjy
+@fIx: 
+封装为类，寻找板子的位置，并发送目标点，将导航分离。
+@date: 12/22
+"""
+"""
 @auther:yjy
 @Description: 
 找板测试程序，寻找板子的位置，并移动到目标位置
 @data: 12/15
 """
 
-#movebase
 import rospy
-import actionlib
-from move_base_msgs.msg import MoveBaseAction, MoveBaseGoal
 from geometry_msgs.msg import PoseStamped
-from actionlib_msgs.msg import GoalStatus
 
 import os
 import sys
@@ -21,40 +23,16 @@ import lidar_cloud_velocity_pub#引入雷达定位找点模块
 import pid_trace#引入pid控制对齐模块
 
 
-def move_to_pose(target_pose):
-    # 创建ActionClient
-    move_base = actionlib.SimpleActionClient("move_base", MoveBaseAction)
-
-    # 等待move_base服务器启动
-    rospy.loginfo("等待move_base服务器启动...")  
-    move_base.wait_for_server()
-
-    # 设置目标位姿
-    goal = MoveBaseGoal()
-    goal.target_pose = target_pose
-    goal.target_pose.header.frame_id = 'base_link'  
-    goal.target_pose.header.stamp = rospy.Time.now()
-
-    # 发送目标给move_base并等待结果
-    rospy.loginfo("正在导航到目标板子前...")
-    move_base.send_goal(goal)
-
-    # 等待结果
-    state = move_base.get_state()
-    while state not in [GoalStatus.SUCCEEDED, GoalStatus.PREEMPTED, GoalStatus.ABORTED, GoalStatus.LOST]:
-        rospy.sleep(3)
-        rospy.loginfo("Waiting for result...")
-        state = move_base.get_state()
-
-    if state == GoalStatus.SUCCEEDED:
-        rospy.loginfo("成功到目标板子前!")
-    else:
-        rospy.loginfo("导航到目标板子前失败！" % state)
-
-if __name__ == '__main__':
+def find_board(plot:bool = False)->PoseStamped:
+    """
+    @description:找板程序，调用雷达和pid控制器对齐
+    @param:plot:是否绘制点云,这会阻塞程序进程 default:False
+    @NOTE:调试时建议开启
+    @return:需要到达的目标点位姿
+                    如果未找到:返回None
+    @raise:None 异常都已经处理
+    """
     try:
-        # 初始化ROS节点
-        rospy.init_node('find_board_py', anonymous=True)
         """
         @description:引入pid控制器,预先对齐
         """
@@ -71,24 +49,19 @@ if __name__ == '__main__':
         rospy.loginfo(">>>in main progress:雷达点云拟合...")
         lidar_cloud_processer = lidar_cloud_velocity_pub.LidarCloudVelocityPub(debug_mode=False)
         lidar_cloud_processer.run()
-        lidar_cloud_processer.plot_points()
-        """
-        @description:订阅雷达点云拟合出的目标点与姿态方向，移动到目标点
-        """
-        rospy.loginfo(">>>in main progress:导航到目标点...")
-        target_pose = PoseStamped()
+        if plot:
+            lidar_cloud_processer.plot_points()
         #等待目标点发布
         if not lidar_cloud_processer.target_board_point == None:
             target_pose = lidar_cloud_processer.target_board_point 
-        move_to_pose(target_pose)
-        rospy.loginfo(">>>in main progress:已到达板子前...")
+        return target_pose
 
     except rospy.ROSException:  
         rospy.logerr("雷达点云拟合目标点丢失!")
-        exit(1)
+        return None
     except TimeoutError:
-        rospy.signal_shutdown("对齐超时!")
-        exit(1)
+        rospy.logerr("对齐超时!")
+        return None
     except KeyboardInterrupt:  
-        rospy.signal_shutdown("kill progress...")
-        exit(2)
+        rospy.logerr("kill progress...")
+        return None

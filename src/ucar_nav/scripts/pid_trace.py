@@ -36,6 +36,7 @@ class PID_BoardTrace_Controller:
         接受:START:接受视觉节点置'nav_status'为START，表示开始导航
         """
         try:
+            print(config_file_path)
             with open(config_file_path, 'r') as file:
                 config = yaml.safe_load(file)
         except FileNotFoundError:
@@ -44,7 +45,6 @@ class PID_BoardTrace_Controller:
         except Exception as e:
             rospy.logerr(f"yaml参数文件读取失败! {e}")
             raise
-
         # PID速度控制参数
         self.find_target_velocity = config['find_target_velocity']
         pid_param = config['tomid_pid_param']
@@ -56,13 +56,13 @@ class PID_BoardTrace_Controller:
         self.timeout_duration_find_target = config['timeout_duration_find_target']
         # tomid刷新率
         self.tomid_fresh_period = config['tomid_fresh_period']
+        self.ideal_tomid =config['ideal_tomid']   # ~[0,1] 理想中心到目标点直线的距离(归一化)
 
         '''
         ros服务参数
         '''
         self.pub = rospy.Publisher('cmd_vel', Twist, queue_size=1)  # cmd_vel发布底盘控制命令
         # ideal guide param 从参数服务器中获取
-        self.ideal_tomid = rospy.get_param('ideal_tomid', 0.05)  # ~[0,1] 理想中心到目标点直线的距离(归一化)
         # 任务开始时间
         self.start_time_stamp = None
 

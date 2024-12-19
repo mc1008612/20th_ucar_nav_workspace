@@ -323,7 +323,7 @@ class LidarCloudVelocityPub:
         # 计算法向量
         self.norm_vector = self.get_normalized_normal_vector(self.a,self.center_point)
         # 转换为四元数，对于小车终点方向，应该与板子的法向量相反，故而取负值
-        angle =- np.arccos(self.norm_vector[0]) * self.norm_vector[1] / abs(self.norm_vector[1])
+        angle = np.arccos(self.norm_vector[0]*(self.norm_vector[1]/abs(self.norm_vector[1]))) + np.pi
         board_orinetation = self.angle_to_quaternion(angle)
         print(f"角度: {angle / np.pi * 180}")
         print(f"四元数: {board_orinetation}")
@@ -345,6 +345,7 @@ class LidarCloudVelocityPub:
             # q.z=RAix.z*sin((a/2)*pi/180)
             rospy.set_param('nav_status', 'LIDAR_FOUND')
             self.target_board_point.pose.orientation =  board_orinetation
+
             # 更新导航参数状态
 
 if __name__ == '__main__':

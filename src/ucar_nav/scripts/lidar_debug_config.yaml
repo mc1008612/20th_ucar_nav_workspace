@@ -11,9 +11,9 @@
     range_max : 2   #生成点云的最大距离，应该小于point_reach_max
 
     #雷达算法取点范围
-    point_reach_max : 3
+    point_reach_max : 2.5
     point_reach_min : 0.3
-    num_points : 20
+    num_points : 15
     max_consecutive_distance : 0.1 #找板连续点最小间隔
     #航点参数
     ideal_distance_with_board : 0.5 #计算出的航点距离板子的垂直距离

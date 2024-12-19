@@ -23,10 +23,11 @@ import lidar_cloud_velocity_pub#引入雷达定位找点模块
 import pid_trace#引入pid控制对齐模块
 
 
-def find_board(plot:bool = False)->PoseStamped:
+def find_board(plot:bool = False,timeout:bool = True)->PoseStamped:
     """
     @description:找板程序，调用雷达和pid控制器对齐
     @param:plot:是否绘制点云,这会阻塞程序进程 default:False
+    @param:timeout:是否超时，如果超时则返回None default:True
     @NOTE:调试时建议开启
     @return:需要到达的目标点位姿
                     如果未找到:返回None
@@ -37,7 +38,7 @@ def find_board(plot:bool = False)->PoseStamped:
         @description:引入pid控制器,预先对齐
         """
         rospy.loginfo(">>>in main progress:对齐...")
-        pid_controller = pid_trace.PID_BoardTrace_Controller(timeout=False)
+        pid_controller = pid_trace.PID_BoardTrace_Controller(timeout = timeout)
         pid_controller.run()
         #检查进程退出情况
         while pid_controller.timer.is_alive():

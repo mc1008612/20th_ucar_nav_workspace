@@ -1,13 +1,9 @@
 #!/usr/bin/env python 
 # -*- coding: utf-8 -*-
-"""
-@auther: yjy
-add functions: mark points to dictionary `locations` by RViz
-
-12/13
-@
-
-"""
+#############################################################
+#by yjy
+#add functions: mark points to dictionary `locations` by RViz
+#############################################################
 import rospy  
 import actionlib  
 import collections

@@ -26,28 +26,39 @@ import find_board
 with open (os.path.join(os.path.dirname(__file__), '12_22_nav_point.yaml'), 'r') as f:
     locations = yaml.load(f)
 
-def success_move_to(location_key:str,max_attempts:int=-1,frame_id:str = 'map')->bool:
+
+def success_move_to(location_key:str=None, pose:PoseStamped=None, max_attempts:int = -1, frame_id:str='map') -> bool:
     """
-    @Description:发布一个目标点，导航到指定目标点
+    @Description: 发布一个目标点，导航到指定目标点
         指定坐标系为map
-    @NOTE:特别注意，与find_board中的方法不同，这里是以map坐标系下的目标点
+    @NOTE: 特别注意，与find_board中的方法不同，这里是以map坐标系下的目标点
         而find_board中的方法为base_link坐标系下的目标点
-    @param:location_key: 目标点名称
-    @param:frame_id: 目标点坐标系 defalut:map
-    @param:max_attempts: 导航失败重新导航最大尝试次数 default:-1(不进行重试导航)
+    @param: location_key: 目标点名称 (可选)
+    @param: pose: 目标点 (PoseStamped对象) (可选)
+    @param: frame_id: 目标点坐标系 default: map
+    @param: max_attempts: 导航失败重新导航最大尝试次数 default: -1 (不进行重试导航)
     @return: 导航成功返回True，失败返回False
     """
-    target_pose = locations[location_key]
-    attempt = max_attempts
+    if location_key is None and pose is None:
+        rospy.logerr("必须提供location_key或goal")
+        return False
 
-    # 设置目标位姿
     goal = MoveBaseGoal()
-    goal.target_pose = target_pose
-    goal.target_pose.header.frame_id = frame_id 
+    location_poseStamped = PoseStamped()
+    goal.target_pose.header.frame_id = frame_id
     goal.target_pose.header.stamp = rospy.Time.now()
 
+    if location_key is not None:#location_key
+        location_poseStamped = locations[location_key]
+    else:#pose
+        location_poseStamped = pose
+
+    goal.target_pose.pose.position = location_poseStamped.pose.position
+    goal.target_pose.pose.orientation = location_poseStamped.pose.orientation
+
+    attempt = max_attempts
     # 发送目标给move_base并等待结果
-    rospy.loginfo(f"正在导航到{location_key}...")
+    rospy.loginfo(f"正在导航到目标点...")
     move_base.send_goal(goal)
 
     # 等待结果
@@ -58,15 +69,16 @@ def success_move_to(location_key:str,max_attempts:int=-1,frame_id:str = 'map')->
         state = move_base.get_state()
 
     if state == GoalStatus.SUCCEEDED:
-        rospy.loginfo(f"成功导航到{location_key}!")
+        rospy.loginfo(f"成功导航到目标点!")
         return True
     else:
-        rospy.logerr(f"导航到{location_key}失败!state:{state},重新导航..." )
-        while (attempt >1
-                    and not success_move_to(location_key,frame_id,max_attempts-1)):attempt -= 1
+        rospy.logerr(f"导航到目标点失败! state: {state}, 重新导航...")
+        while (attempt > 1
+            and not success_move_to(location_key=location_key, pose = pose, max_attempts=-1)):
+            attempt -= 1
         if not attempt == 0:
             return True
-        return False#尝试次数耗尽仍然失败
+        return False  # 尝试次数耗尽仍然失败
     
 def count_points_in_dict(d:dict, prefix='find_board_point_')->int:
     """
@@ -97,7 +109,7 @@ if __name__ == '__main__':
         """
         @开始逐个点导航
         """
-        if success_move_to('terrorist_point',3):#前往恐怖分子点成功
+        if success_move_to(location_key='terrorist_point',max_attempts=3):#前往恐怖分子点成功
             rospy.loginfo("前往恐怖分子点成功")
         else:
             rospy.logerr("前往恐怖分子点失败，正在返航")
@@ -107,13 +119,24 @@ if __name__ == '__main__':
         rospy.set_param('take_photo', 1)#启动拍照
         while rospy.get_param('take_photo') ==1:pass#阻塞等待识别结果
 
-        if success_move_to('first_aid_kit',3):#前往恐怖分子点成功
-            rospy.loginfo("前往急救包点成功")
+        """
+        上桥点
+        """
+        success_move_to(location_key='bridge_point',max_attempts = 3)#前往上桥点
+        """
+        1.选择发布点过桥
+        2.发布速度过桥
+        cmd_pub = rospy.Publisher('cmd_vel', Twist, queue_size=1)
+        cmd_pub.publish(cross_bridge_speed, 0.0, 0, 0)
+        """
+
+        if success_move_to(location_key='first_aid_kit',max_attempts = 3):#前往恐怖分子点成功
+            rospy.loginfo("前往急救包点成功")   
         else:
             rospy.logerr("前往急救包失败，正在返航")
             if success_move_to('start_point'):
                 rospy.loginfo("返航成功")
-                success_move_to('terrorist_point')#重新前往急救包点       
+                success_move_to('first_aid_kit')#重新前往急救包点       
         rospy.set_param('take_photo', 1)#启动拍照
         while rospy.get_param('take_photo') ==1:pass#阻塞等待识别结果
         
@@ -125,10 +148,24 @@ if __name__ == '__main__':
 
         for i in range(find_board_point_len):
             if success_move_to(f'find_board_point_{i}'):#前往目标点成功
-                rospy.loginfo(f"前往{i}号板子成功")
+                rospy.loginfo(f"前往{i}号板子查找点成功")
                 board_park_point = find_board.find_board()
                 if not board_park_point ==None:#成功获得板子泊车点坐标，则进行泊车到
-                    success_move_to(,board_park_point)
+                    success_move_to(pose = board_park_point,max_attempts = 3)
+                    break
+                else :
+                    rospy.loginfo(f"前往{i}号板子查找点失败")
+                    """
+                    找不到板子做的决策
+                    """
+        """
+        来到巡线开始点
+        """
+        success_move_to(location_key = 'wait_for_trace_point',max_attempts = 3)
+        rospy.set_param('nongoal_flag',2)#巡线脚本
+
+        rospy.loginfo("导航结束")
+        
 
 
     except rospy.ROSInterruptException:

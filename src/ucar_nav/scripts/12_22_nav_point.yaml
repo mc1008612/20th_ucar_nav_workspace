@@ -1,0 +1,19 @@
+#记录下所有需要到达的点的坐标
+#exapmle:
+#first aid kit point: Pose(Point(-2.262089,-1.707596,0.000000),Quaternion(0.000000,0.000000,-0.702062,0.712116))
+
+#出发点
+start_point:
+#恐怖分子点
+terrorist_point:
+#急救包点
+first_aid_kit_point:
+#寻找板子的旋转点
+#命名规则:find_board_point_x ,按数字顺序遍历
+#优先跑哪几个点，多做几个备用点。
+find_board_point_1:
+find_board_point_2: 
+find_board_point_3:
+#上桥点 
+bridge_point:
+wait_for_trace_point: 

@@ -2,6 +2,7 @@
 
 import rospy
 from geometry_msgs.msg import Twist, Pose
+from std_msgs.msg import Float32MultiArray
 from tf import transformations
 import math
 
@@ -179,6 +180,16 @@ def move(distance,  target_angle_radians=0,direction='forward', angle_error_thre
         elif direction == 'literal':
             vel_msg = create_twist_message(y_speed=adjusted_speed, angular_speed=angular_speed)
 
+        #   是否保持安全距离
+        need_brake,keep_distance_vel_msg = keep_distance()
+        if need_brake:
+            velocity_publisher.publish(keep_distance_vel_msg)
+            rospy.loginfo("Keep distance")
+        else:
+            vel_msg.linear.x +=  keep_distance_vel_msg.linear.x
+            vel_msg.linear.y +=  keep_distance_vel_msg.linear.y
+            velocity_publisher.publish(vel_msg)
+
         # 发布速度消息
         velocity_publisher.publish(vel_msg)
 
@@ -220,6 +231,89 @@ def align_to_angle(target_angle_radians):
     angle_to_rotate = (angle_to_rotate + math.pi) % (2 * math.pi) - math.pi  # 规范化角度误差
 
     return angle_to_rotate
+
+def keep_distance(safe_distance=0.25) -> tuple[bool, Twist]:
+    # 新增独立的PID参数配置
+    pid_config['keep_distance_front_back'] = {
+        'Kp': 2.5,
+        'Ki': 0,
+        'Kd': 0.3,
+        'err': 0.02  # 误差阈值，单位为米
+    }
+    
+    pid_config['keep_distance_left_right'] = {
+        'Kp': 2.5,
+        'Ki': 0,
+        'Kd': 0.3,
+        'err': 0.02  # 误差阈值，单位为米
+    }
+    
+    # 初始化PID控制器
+    pid_front_back = PIDController(pid_config['keep_distance_front_back']['Kp'],
+                                   pid_config['keep_distance_front_back']['Ki'],
+                                   pid_config['keep_distance_front_back']['Kd'])
+    
+    pid_left_right = PIDController(pid_config['keep_distance_left_right']['Kp'],
+                                   pid_config['keep_distance_left_right']['Ki'],
+                                   pid_config['keep_distance_left_right']['Kd'])
+    
+    try:
+        lidar_msg = rospy.wait_for_message('/basic_lidar_info', Float32MultiArray, timeout=10)
+        front_distance, back_distance, left_distance, right_distance = lidar_msg.data
+    except Exception as e:
+        rospy.logerr(f"Lidar error: {e}")
+        return False, Twist()
+
+    vel_msg = Twist()
+    need_brake = False
+    t0 = rospy.Time.now().to_sec()
+
+    def pid_control(current_dist, safe, pid, is_reverse=False):
+        """PID距离控制核心函数"""
+        error = 0
+        brake_flag = False
+        if current_dist > 2 * safe:
+            error = 0
+        else:
+            error = current_dist - safe
+        if abs(error) > 0.07:
+            brake_flag = True
+        
+        # 添加符号处理
+        output = pid.update(error, rospy.Time.now().to_sec() - t0) * (-1 if is_reverse else 1)
+        return output, brake_flag
+
+    # 前后方向控制
+    front_speed, front_brake = pid_control(front_distance, safe_distance, pid_front_back, is_reverse=True)
+    back_speed, back_brake = pid_control(back_distance, safe_distance, pid_front_back)
+    back_speed = -back_speed
+    # 左右方向控制
+    left_speed, left_brake = pid_control(left_distance, safe_distance, pid_left_right, is_reverse=True)
+    right_speed, right_brake = pid_control(right_distance, safe_distance, pid_left_right)
+    right_speed = -right_speed
+    # 合成最终速度
+    linear_x = front_speed + back_speed
+    linear_y = left_speed + right_speed
+    
+    # 合并刹车标志
+    need_brake = any([front_brake, back_brake, left_brake, right_brake])
+
+    # 速度限幅（保持最小运动速度）
+    def clamp_speed(speed):
+        return math.copysign(max(abs(speed), 0.1), speed) if speed != 0 else 0
+
+    vel_msg.linear.x = clamp_speed(linear_x)
+    vel_msg.linear.y = clamp_speed(linear_y)
+
+    # 达到稳定条件时停止
+    if abs(linear_x) < pid_config['keep_distance_front_back']['err'] and \
+       abs(linear_y) < pid_config['keep_distance_left_right']['err']:
+        vel_msg.linear.x = 0
+        vel_msg.linear.y = 0
+        need_brake = False
+
+    return need_brake, vel_msg
+
 
 if __name__ == '__main__':
     try:

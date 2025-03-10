@@ -108,7 +108,7 @@ def rotate(angle_radians):
     create_twist_message(angular_speed=0)
     rospy.loginfo("Rotation completed")
 
-def move(distance, direction='forward', target_angle_radians=0):
+def move(distance,  target_angle_radians=0,direction='forward', angle_error_threshold=math.pi/8):
     # 根据方向选择PID控制器参数
     if direction == 'forward':
         config = pid_config['move_forward']
@@ -143,6 +143,9 @@ def move(distance, direction='forward', target_angle_radians=0):
 
         # 计算已移动的距离
         current_distance = math.hypot(current_x - initial_x, current_y - initial_y)
+        # 根据distance的符号调整current_distance的符号
+        if distance < 0:
+            current_distance = -current_distance
 
         # 计算误差
         error_distance = distance - current_distance
@@ -165,11 +168,16 @@ def move(distance, direction='forward', target_angle_radians=0):
         angle_to_rotate = (angle_to_rotate + math.pi) % (2 * math.pi) - math.pi  # 规范化角度误差
         angular_speed = pid_rotate.update(angle_to_rotate, dt)
 
+        # 根据角度误差调整速度
+        angle_error_factor = 1 - abs(angle_to_rotate) / angle_error_threshold
+        angle_error_factor = max(angle_error_factor, 0)  # 确保angle_error_factor不小于0
+        adjusted_speed = speed * angle_error_factor
+
         # 创建Twist消息对象
         if direction == 'forward':
-            vel_msg = create_twist_message(x_speed=speed, angular_speed=angular_speed)
+            vel_msg = create_twist_message(x_speed=adjusted_speed, angular_speed=angular_speed)
         elif direction == 'literal':
-            vel_msg = create_twist_message(y_speed=speed, angular_speed=angular_speed)
+            vel_msg = create_twist_message(y_speed=adjusted_speed, angular_speed=angular_speed)
 
         # 发布速度消息
         velocity_publisher.publish(vel_msg)
@@ -178,7 +186,7 @@ def move(distance, direction='forward', target_angle_radians=0):
         rospy.loginfo(f"Move {direction}: Current {current_distance:.2f}m, "
                      f"Target {distance:.2f}m, "
                      f"Error {error_distance:.2f}m, "
-                     f"Speed {speed:.2f}m/s, "
+                     f"Speed {adjusted_speed:.2f}m/s, "
                      f"Angle Error {math.degrees(angle_to_rotate):.2f}deg, "
                      f"Angular Speed {angular_speed:.2f}rad/s")
 
@@ -224,11 +232,21 @@ if __name__ == '__main__':
         rate = rospy.Rate(10)
         
         #左正右负 前正后负
-        
+
         move(1.5,target_angle_radians=math.radians(0))
+
         rotate(math.radians(180))
         move(-0.5,direction = 'literal',target_angle_radians=math.radians(180))
-        move(1.5,target_angle_radians=math.radians(0))
+        move(1.2,target_angle_radians=math.radians(180))
+
+        rotate(math.radians(180))
+        move(0.5,direction = 'literal',target_angle_radians=math.radians(0))
+        move(1.7,target_angle_radians=math.radians(0))
+
+        rotate(math.radians(180))
+        move(-0.5,direction = 'literal',target_angle_radians=math.radians(180))
+        move(2,target_angle_radians=math.radians(180))
+
         rospy.set_param('pid_end', 1)
     except rospy.ROSInterruptException:
         rospy.logerr("Navigation interrupted")

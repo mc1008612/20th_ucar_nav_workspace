@@ -232,19 +232,30 @@ def align_to_angle(target_angle_radians):
 
     return angle_to_rotate
 
+def pid_control(current_dist, target_dist, pid, dt):
+    """PID距离控制核心函数"""
+    error = target_dist - current_dist
+    if abs(error) > 0.6:
+        error = 0
+    print(error)
+    output = pid.update(error, dt)
+    brake_flag = abs(error) > 0.07  # 设置一个刹车阈值
+    return output, brake_flag
+
+# 在 keep_distance 方法中使用修改后的 pid_control
 def keep_distance(safe_distance=0.25) -> tuple[bool, Twist]:
     # 新增独立的PID参数配置
     pid_config['keep_distance_front_back'] = {
-        'Kp': 2.5,
+        'Kp': 0.3,
         'Ki': 0,
-        'Kd': 0.3,
+        'Kd': 0.0,
         'err': 0.02  # 误差阈值，单位为米
     }
     
     pid_config['keep_distance_left_right'] = {
-        'Kp': 2.5,
+        'Kp': 0.1,
         'Ki': 0,
-        'Kd': 0.3,
+        'Kd': 0.0,
         'err': 0.02  # 误差阈值，单位为米
     }
     
@@ -257,40 +268,21 @@ def keep_distance(safe_distance=0.25) -> tuple[bool, Twist]:
                                    pid_config['keep_distance_left_right']['Ki'],
                                    pid_config['keep_distance_left_right']['Kd'])
     
-    try:
-        lidar_msg = rospy.wait_for_message('/basic_lidar_info', Float32MultiArray, timeout=10)
-        front_distance, back_distance, left_distance, right_distance = lidar_msg.data
-    except Exception as e:
-        rospy.logerr(f"Lidar error: {e}")
-        return False, Twist()
+    lidar_msg = rospy.wait_for_message('/basic_lidar_info', Float32MultiArray, timeout=10)
+    front_distance, back_distance, left_distance, right_distance = lidar_msg.data
 
     vel_msg = Twist()
     need_brake = False
     t0 = rospy.Time.now().to_sec()
 
-    def pid_control(current_dist, safe, pid, is_reverse=False):
-        """PID距离控制核心函数"""
-        error = 0
-        brake_flag = False
-        if current_dist > 2 * safe:
-            error = 0
-        else:
-            error = current_dist - safe
-        if abs(error) > 0.07:
-            brake_flag = True
-        
-        # 添加符号处理
-        output = pid.update(error, rospy.Time.now().to_sec() - t0) * (-1 if is_reverse else 1)
-        return output, brake_flag
-
     # 前后方向控制
-    front_speed, front_brake = pid_control(front_distance, safe_distance, pid_front_back, is_reverse=True)
-    back_speed, back_brake = pid_control(back_distance, safe_distance, pid_front_back)
+    front_speed, front_brake = pid_control(front_distance, safe_distance, pid_front_back, rospy.Time.now().to_sec() - t0)
+    back_speed, back_brake = pid_control(back_distance, safe_distance, pid_front_back, rospy.Time.now().to_sec() - t0)
     back_speed = -back_speed
     # 左右方向控制
-    left_speed, left_brake = pid_control(left_distance, safe_distance, pid_left_right, is_reverse=True)
-    right_speed, right_brake = pid_control(right_distance, safe_distance, pid_left_right)
-    right_speed = -right_speed
+    left_speed, left_brake = pid_control(left_distance, safe_distance, pid_left_right, rospy.Time.now().to_sec() - t0)
+    right_speed, right_brake = pid_control(right_distance, safe_distance, pid_left_right, rospy.Time.now().to_sec() - t0)
+    left_speed = -left_speed
     # 合成最终速度
     linear_x = front_speed + back_speed
     linear_y = left_speed + right_speed
@@ -300,14 +292,16 @@ def keep_distance(safe_distance=0.25) -> tuple[bool, Twist]:
 
     # 速度限幅（保持最小运动速度）
     def clamp_speed(speed):
-        return math.copysign(max(abs(speed), 0.1), speed) if speed != 0 else 0
+        return math.copysign(max(abs(speed), speed/abs(speed)), speed) if speed != 0 else 0
 
     vel_msg.linear.x = clamp_speed(linear_x)
     vel_msg.linear.y = clamp_speed(linear_y)
 
     # 达到稳定条件时停止
-    if abs(linear_x) < pid_config['keep_distance_front_back']['err'] and \
-       abs(linear_y) < pid_config['keep_distance_left_right']['err']:
+    if abs(front_distance - safe_distance) < pid_config['keep_distance_front_back']['err'] and \
+       abs(back_distance - safe_distance) < pid_config['keep_distance_front_back']['err'] and \
+       abs(left_distance - safe_distance) < pid_config['keep_distance_left_right']['err'] and \
+       abs(right_distance - safe_distance) < pid_config['keep_distance_left_right']['err']:
         vel_msg.linear.x = 0
         vel_msg.linear.y = 0
         need_brake = False
@@ -326,7 +320,6 @@ if __name__ == '__main__':
         rate = rospy.Rate(10)
         
         #左正右负 前正后负
-
         move(1.5,target_angle_radians=math.radians(0))
 
         rotate(math.radians(180))

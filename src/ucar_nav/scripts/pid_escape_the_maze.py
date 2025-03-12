@@ -6,6 +6,10 @@ from std_msgs.msg import Float32MultiArray
 from tf import transformations
 import math
 
+# 创建一个Publisher对象，发布到/cmd_vel话题
+velocity_publisher = rospy.Publisher('/cmd_vel', Twist, queue_size=10)
+
+brake_threshold = 0.07
 # PID控制器参数配置（包含误差阈值）
 pid_config = {
     'move_forward': {
@@ -25,11 +29,29 @@ pid_config = {
         'Ki': 0,
         'Kd': 0.01,
         'err': 0.01  # 新增旋转误差阈值
+    },
+    'keep_distance_front_back': {
+        'Kp': 0.5,
+        'Ki': 0,
+        'Kd': 0.015,
+        'err': 0.03,  # 误差阈值，单位为米
+    },
+    'keep_distance_left_right': {
+        'Kp': 0.5,
+        'Ki': 0,
+        'Kd': 0.0,
+        'err': 0.03,  # 误差阈值，单位为米
     }
 }
 
 class PIDController:
     def __init__(self, Kp, Ki, Kd):
+        """
+        @Description: 初始化PID控制器
+        @param: Kp: 比例增益
+        @param: Ki: 积分增益
+        @param: Kd: 微分增益
+        """
         self.Kp = Kp
         self.Ki = Ki
         self.Kd = Kd
@@ -37,26 +59,47 @@ class PIDController:
         self.integral = 0
 
     def update(self, error, dt):
+        """
+        @Description: 更新PID控制器并计算输出
+        @param: error: 当前误差
+        @param: dt: 时间步长
+        @return: 控制输出
+        """
         self.integral += error * dt
         derivative = (error - self.previous_error) / dt
         output = self.Kp * error + self.Ki * self.integral + self.Kd * derivative
         self.previous_error = error
         # 输出限幅保持
-        if abs(output) < 0.1:
+        if abs(output) < 0.1 and output != 0:
             output = 0.1 if output > 0 else -0.1
         return output
 
 def create_twist_message(x_speed=0, y_speed=0, angular_speed=0):
+    """
+    @Description: 创建Twist消息对象
+    @param: x_speed: x方向速度
+    @param: y_speed: y方向速度
+    @param: angular_speed: 角速度
+    @return: Twist消息对象
+    """
     vel_msg = Twist()
     vel_msg.linear.x = x_speed
     vel_msg.linear.y = y_speed
     vel_msg.angular.z = angular_speed
     return vel_msg
-
+    
 def get_current_pose():
+    """
+    @Description: 获取当前机器人姿态
+    @return: 当前姿态 (Pose对象)
+    """
     return rospy.wait_for_message('now_position', Pose, 50)
 
 def rotate(angle_radians):
+    """
+    @Description: 旋转指定角度
+    @param: angle_radians: 旋转角度 (弧度)
+    """
     config = pid_config['rotate']
     pid = PIDController(config['Kp'], config['Ki'], config['Kd'])
 
@@ -110,6 +153,15 @@ def rotate(angle_radians):
     rospy.loginfo("Rotation completed")
 
 def move(distance,  target_angle_radians=0,direction='forward', angle_error_threshold=math.pi/8):
+    """
+    @Description: 控制机器人移动到指定距离，同时保持目标角度
+    @NOTE: 使用PID控制器进行距离和角度控制，误差阈值由pid_config['move_forward']['err']或pid_config['move_literal']['err']指定
+    @param: distance: 目标移动距离（米）
+    @param: target_angle_radians: 目标角度（弧度） default: 0
+    @param: direction: 移动方向，'forward' 或 'literal' default: 'forward'
+    @param: angle_error_threshold: 角度误差阈值（弧度） default: math.pi/8
+    @return: 无
+    """
     # 根据方向选择PID控制器参数
     if direction == 'forward':
         config = pid_config['move_forward']
@@ -180,16 +232,6 @@ def move(distance,  target_angle_radians=0,direction='forward', angle_error_thre
         elif direction == 'literal':
             vel_msg = create_twist_message(y_speed=adjusted_speed, angular_speed=angular_speed)
 
-        #   是否保持安全距离
-        need_brake,keep_distance_vel_msg = keep_distance()
-        if need_brake:
-            velocity_publisher.publish(keep_distance_vel_msg)
-            rospy.loginfo("Keep distance")
-        else:
-            vel_msg.linear.x +=  keep_distance_vel_msg.linear.x
-            vel_msg.linear.y +=  keep_distance_vel_msg.linear.y
-            velocity_publisher.publish(vel_msg)
-
         # 发布速度消息
         velocity_publisher.publish(vel_msg)
 
@@ -214,6 +256,11 @@ def move(distance,  target_angle_radians=0,direction='forward', angle_error_thre
     rospy.loginfo(f"Move {direction} completed")
 
 def align_to_angle(target_angle_radians):
+    """
+    @Description: 对齐到指定角度
+    @param: target_angle_radians: 目标角度 (弧度)
+    @return: 需要旋转的角度差 (弧度)
+    """
     current_pose = get_current_pose()
     if not current_pose:
         rospy.logerr("Failed to get current pose")
@@ -233,41 +280,41 @@ def align_to_angle(target_angle_radians):
     return angle_to_rotate
 
 def pid_control(current_dist, target_dist, pid, dt):
-    """PID距离控制核心函数"""
+    """
+    @Description: PID距离控制核心函数
+    @param: current_dist: 当前距离
+    @param: target_dist: 目标距离
+    @param: pid: PID控制器对象
+    @param: dt: 时间步长
+    @return: 控制输出, 刹车标志
+    """
     error = target_dist - current_dist
-    if abs(error) > 0.6:
-        error = 0
-    print(error)
     output = pid.update(error, dt)
-    brake_flag = abs(error) > 0.07  # 设置一个刹车阈值
+    brake_flag = abs(error) > brake_threshold  # 设置一个刹车阈值
     return output, brake_flag
 
-# 在 keep_distance 方法中使用修改后的 pid_control
-def keep_distance(safe_distance=0.25) -> tuple[bool, Twist]:
-    # 新增独立的PID参数配置
-    pid_config['keep_distance_front_back'] = {
-        'Kp': 0.3,
-        'Ki': 0,
-        'Kd': 0.0,
-        'err': 0.02  # 误差阈值，单位为米
-    }
-    
-    pid_config['keep_distance_left_right'] = {
-        'Kp': 0.1,
-        'Ki': 0,
-        'Kd': 0.0,
-        'err': 0.02  # 误差阈值，单位为米
-    }
-    
+
+# 重命名原有的 keep_distance 方法为 keep_distance_twist
+def keep_distance_twist(direction='forward', safe_distance=0.25, threshold=1) -> tuple[bool, Twist]:
+    """
+    @Description: 保持与障碍物的安全距离
+    @param: direction: 方向 ('forward', 'back', 'left', 'right')
+    @param: safe_distance: 安全距离
+    @param: threshold: 距离阈值
+    @return: 是否需要刹车, Twist消息对象
+    """
+    # 根据方向选择PID控制器参数
+    if direction == 'forward' or direction == 'back':
+        config = pid_config['keep_distance_front_back']
+    elif direction == 'left' or direction == 'right':
+        config = pid_config['keep_distance_left_right']
+    else:
+        rospy.logerr("Invalid direction. Use 'forward', 'back', 'left', or 'right'.")
+        return False, create_twist_message()
+
     # 初始化PID控制器
-    pid_front_back = PIDController(pid_config['keep_distance_front_back']['Kp'],
-                                   pid_config['keep_distance_front_back']['Ki'],
-                                   pid_config['keep_distance_front_back']['Kd'])
-    
-    pid_left_right = PIDController(pid_config['keep_distance_left_right']['Kp'],
-                                   pid_config['keep_distance_left_right']['Ki'],
-                                   pid_config['keep_distance_left_right']['Kd'])
-    
+    pid = PIDController(config['Kp'], config['Ki'], config['Kd'])
+
     lidar_msg = rospy.wait_for_message('/basic_lidar_info', Float32MultiArray, timeout=10)
     front_distance, back_distance, left_distance, right_distance = lidar_msg.data
 
@@ -275,64 +322,132 @@ def keep_distance(safe_distance=0.25) -> tuple[bool, Twist]:
     need_brake = False
     t0 = rospy.Time.now().to_sec()
 
-    # 前后方向控制
-    front_speed, front_brake = pid_control(front_distance, safe_distance, pid_front_back, rospy.Time.now().to_sec() - t0)
-    back_speed, back_brake = pid_control(back_distance, safe_distance, pid_front_back, rospy.Time.now().to_sec() - t0)
-    back_speed = -back_speed
-    # 左右方向控制
-    left_speed, left_brake = pid_control(left_distance, safe_distance, pid_left_right, rospy.Time.now().to_sec() - t0)
-    right_speed, right_brake = pid_control(right_distance, safe_distance, pid_left_right, rospy.Time.now().to_sec() - t0)
-    left_speed = -left_speed
-    # 合成最终速度
-    linear_x = front_speed + back_speed
-    linear_y = left_speed + right_speed
-    
-    # 合并刹车标志
-    need_brake = any([front_brake, back_brake, left_brake, right_brake])
+    # 根据方向选择距离
+    if direction == 'forward':
+        current_distance = front_distance
+    elif direction == 'back':
+        current_distance = back_distance
+    elif direction == 'left':
+        current_distance = left_distance
+    elif direction == 'right':
+        current_distance = right_distance
 
-    # 速度限幅（保持最小运动速度）
-    def clamp_speed(speed):
-        return math.copysign(max(abs(speed), speed/abs(speed)), speed) if speed != 0 else 0
+    # 如果距离超过阈值，不进行控制
+    if current_distance > threshold:
+        return False, Twist()
 
-    vel_msg.linear.x = clamp_speed(linear_x)
-    vel_msg.linear.y = clamp_speed(linear_y)
+    # 计算控制信号
+    speed, brake_flag = pid_control(current_distance, safe_distance, pid, rospy.Time.now().to_sec() - t0)
+
+    # 速度限幅（保持在指定的上下限范围内，并保留符号）
+    def clamp_speed(speed, min_speed=0.1, max_speed=0.5):
+        """
+        @Description: 速度限幅
+        @param: speed: 当前速度
+        @param: min_speed: 最小速度
+        @param: max_speed: 最大速度
+        @return: 限幅后的速度
+        """
+        if speed == 0:
+            return 0
+        # 计算速度的绝对值
+        abs_speed = abs(speed)
+        # 应用上下限限制
+        clamped_abs_speed = max(min(abs_speed, max_speed), min_speed)
+        # 恢复原始符号
+        return math.copysign(clamped_abs_speed, speed)
+
+    # 根据方向设置速度
+    if direction == 'forward':
+        vel_msg.linear.x = -clamp_speed(speed)
+    elif direction == 'back':
+        vel_msg.linear.x = clamp_speed(speed)
+    elif direction == 'left':
+        vel_msg.linear.y = -clamp_speed(speed)
+    elif direction == 'right':
+        vel_msg.linear.y = clamp_speed(speed)
+
+    need_brake = brake_flag
 
     # 达到稳定条件时停止
-    if abs(front_distance - safe_distance) < pid_config['keep_distance_front_back']['err'] and \
-       abs(back_distance - safe_distance) < pid_config['keep_distance_front_back']['err'] and \
-       abs(left_distance - safe_distance) < pid_config['keep_distance_left_right']['err'] and \
-       abs(right_distance - safe_distance) < pid_config['keep_distance_left_right']['err']:
+    if abs(current_distance - safe_distance) < config['err']:
         vel_msg.linear.x = 0
         vel_msg.linear.y = 0
         need_brake = False
 
     return need_brake, vel_msg
 
+# 新写一个 keep_distance 方法，持续调用 keep_distance_twist，直到达到稳定状态
+def keep_distance(direction='forward', safe_distance=0.25, threshold=1):
+    """
+    @Description: 持续保持与障碍物的安全距离，直到达到稳定状态
+    @param: direction: 方向 ('forward', 'back', 'left', 'right')
+    @param: safe_distance: 安全距离
+    @param: threshold: 距离阈值
+    @return: 无
+    """
+    while not rospy.is_shutdown():
+        _, vel_msg = keep_distance_twist(direction, safe_distance, threshold)
+        velocity_publisher.publish(vel_msg)
+        rospy.loginfo(f"Keep distance {direction}: Safe Distance {safe_distance:.2f}m, Threshold {threshold:.2f}m")
+        if vel_msg.linear.x == 0 and vel_msg.linear.y == 0:
+            break
+        rate.sleep()
 
 if __name__ == '__main__':
     try:
         # 初始化ROS节点
         rospy.init_node('maze_navigator', anonymous=True)
 
-        # 创建一个Publisher对象，发布到/cmd_vel话题
-        velocity_publisher = rospy.Publisher('/cmd_vel', Twist, queue_size=10)
         # 设置循环频率
         rate = rospy.Rate(10)
+        #起点矫正位置
+        rotate(align_to_angle(math.radians(0)))
+        keep_distance('left',0.25)
+
+        #第一直道
+        move(1.5,math.radians(0))
+
+        #第一弯道
+        rotate(align_to_angle(math.radians(180)))
+        keep_distance('right',0.25)
         
-        #左正右负 前正后负
+        #第二直道
+        rotate(align_to_angle(math.radians(180)))
+        move(0.6,target_angle_radians=math.radians(180))
+
+        #识别点
+        rospy.sleep(rospy.Duration(3))
+
+        keep_distance('left',0.25)
+        rotate(align_to_angle(math.radians(180)))
+        move(0.6,target_angle_radians=math.radians(180))
+        
+        #第二弯道
+        keep_distance('left',0.25)
+        rotate(align_to_angle(math.radians(0)))
+        keep_distance('left',0.25)
+
+        #第三直道
+        rotate(align_to_angle(math.radians(0)))
         move(1.5,target_angle_radians=math.radians(0))
+        keep_distance('forward',0.3)
 
-        rotate(math.radians(180))
-        move(-0.5,direction = 'literal',target_angle_radians=math.radians(180))
-        move(1.2,target_angle_radians=math.radians(180))
+        #第三弯道
+        keep_distance('right',0.25)
+        rotate(align_to_angle(math.radians(180)))
+        keep_distance('right',0.25)
 
-        rotate(math.radians(180))
-        move(0.5,direction = 'literal',target_angle_radians=math.radians(0))
-        move(1.7,target_angle_radians=math.radians(0))
+        #最终直道
+        rotate(align_to_angle(math.radians(180)))
+        keep_distance('right',0.25)
+        move(1.5,target_angle_radians=math.radians(180))
 
-        rotate(math.radians(180))
-        move(-0.5,direction = 'literal',target_angle_radians=math.radians(180))
-        move(2,target_angle_radians=math.radians(180))
+        #终点矫正位置
+        keep_distance('forward',0.3)
+        keep_distance('left',0.25)
+        rotate(align_to_angle(math.radians(90)))
+        keep_distance('left',0.25)
 
         rospy.set_param('pid_end', 1)
     except rospy.ROSInterruptException:

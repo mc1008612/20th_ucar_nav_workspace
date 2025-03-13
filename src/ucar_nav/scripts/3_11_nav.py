@@ -26,17 +26,19 @@ from tf import transformations
 import math
 
 locations = {
-    'start_point',
-    'select_point',
+    #'start_point',
+    'select_point':Pose(Point(1.1096277236938477,3.2154581546783447 ,0.0), Quaternion(0.0,0.0,0.7039566779415104,0.7102429130808365)),
     #点的顺序为头朝向地图北，逆时针旋转
-    'pickup_point-1',
-    'pickup_point-2',
-    'pickup_point-3',
-    'cross_bridge_point',
-    'traffic_light_point',
-    'cross_road_point-1',
-    'cross_road_point-2'
-    ''}
+    
+    # 'pickup_point-1',
+    # 'pickup_point-2',
+    # 'pickup_point-3',
+    
+    #'cross_bridge_point',
+    'traffic_light_point':Pose(Point(3.031625747680664,3.807620048522949 ,0.0), Quaternion(0.0,0.0,0.6981053788795045,0.7159950279013838)),
+    'cross_road_point-1':Pose(Point(2.6082823276519775,3.4113075733184814 ,0.0), Quaternion(0.0,0.0,-0.7012479374651338,0.7129174778337923)),
+    'cross_road_point-2':Pose(Point(4.5017476081848145,3.2250804901123047 ,0.0), Quaternion(0.0,0.0,-0.6940040541053553,0.7199710917011398))
+    }
 
 
 def success_move_to(location_key:str=None, pose:PoseStamped=None, max_attempts:int = -1, frame_id:str='map') -> bool:
@@ -95,11 +97,11 @@ if __name__ == '__main__':
         """
         @param:
         """
-        ideal_board_distance = 0.2
+        ideal_board_distance = 0.25
         ideal_distance_for_traffic_light = 0.5
 
         # 初始化ROS节点
-        rospy.init_node('3_9_nav_py', anonymous=False)
+        rospy.init_node('3_11_nav_py', anonymous=False)
         # 创建ActionClient
         move_base = actionlib.SimpleActionClient("move_base", MoveBaseAction)
         # 等待move_base服务器启动
@@ -107,6 +109,8 @@ if __name__ == '__main__':
         #创建速度控制发布者
         vel_pub = rospy.Publisher('cmd_vel', Twist, queue_size=1)
         move_base.wait_for_server()
+
+        while(rospy.get_param('pid_end',0)==0):pass
 
         """
         @开始逐个点导航
@@ -119,39 +123,63 @@ if __name__ == '__main__':
         """
         选货
         """
-        rotate_angular_speed = 0.5
-        rospy.set_param('take_photo',1)
-        while rospy.get_param('take_photo') ==1:
-            vel_pub(pid.create_twist_message(0,0,rotate_angular_speed))
-        # 获取当前位置，根据粗略位置大概确定方向
-        now_position = rospy.wait_for_message('now_position',Pose,5)
-        now_angular = transformations.euler_from_quaternion(now_position.orientation)[2]
-        # 计算now_angular与90, 180, 270的差值
-        angles = [90, 180, 270]
-        differences = [abs(now_angular - angle) for angle in angles]
-        # 找到差值最小的索引
-        min_index = differences.index(min(differences))
-        # 将now_angular修正为差值最小的那个值
-        #同时角度转弧度
-        now_angular = math.radians(angles[min_index])
-        #矫正位置
-        pid.rotate(pid.align_to_angle(now_angular))
-        pid.move(0.5,now_angular)
-        pid.keep_distance(ideal_board_distance)
+        rospy.set_param('take_photo', 1)
+        angles = [math.radians(90), math.radians(180), math.radians(270)]
+        timeout_duration = rospy.Duration(3.0)
 
+        for angle in angles: 
+            pid.rotate(pid.align_to_angle(angle))
+            find_flag = False
+            start_time = rospy.Time.now()
+
+            while rospy.get_param('object_state', 0) == 0:
+                if rospy.Time.now() - start_time > timeout_duration:
+                    rospy.logwarn(f"等待object_state超时，跳出循环，当前角度: {angle}rad")
+                    continue
+                if rospy.get_param('object_state', 0) == 1:
+                    rospy.loginfo(f"未找到目标，继续旋转，当前角度: {angle}rad")
+                if rospy.get_param('object_state', 0) in [3, 4]:
+                    rospy.loginfo(f"找到目标，跳出循环，当前角度: {angle}rad")
+                    find_flag = True
+                    break
+                rospy.sleep(0.1)  # 添加一个小的睡眠以避免CPU占用过高
+
+            if find_flag:
+                break
+        else :
+            rospy.logerr("未找到目标")
+
+        keep_distance = pid.keep_distance('forward',ideal_board_distance)
         """
         到检测红绿灯点
         """
+        #方案1直接导航
         success_move_to(location_key='traffic_light_point',max_attempts = 3) 
+        
+        #方案2过桥
+        # success_move_to(location_key='cross_bridge_point',max_attempts=2)
+        # pid.move('forward',1)
+        # success_move_to(location_key='traffic_light_point',max_attempts=2)
+        
+        """
+        识别红绿灯
+        """
         pid.rotate(pid.align_to_angle(math.radians(90)))
-        pid.keep_distance(ideal_distance_for_traffic_light)    
+        pid.keep_distance('forward',ideal_distance_for_traffic_light)    
         rospy.set_param('take_photo', 1)#启动拍照
-        while rospy.get_param('take_photo') ==1:pass#阻塞等待识别结果
+        while rospy.get_param('take_photo',0) ==1:pass#阻塞等待识别结果
+        if rospy.get_param('able_to_go', 0)==1:
+            rospy.loginfo("前往交叉口1")
+            success_move_to('cross_road_point-1')
+        else:
+            rospy.loginfo("前往交叉口2")
+            success_move_to('cross_road_point-2')
         
         """
-        决策，前往哪一个路口
+        巡线点
         """
-        
+        rospy.set_param('start_trace',1)
+        ###等待巡线终止条件
 
         rospy.loginfo("导航结束")
         rospy.set_param('stop_flag',1)

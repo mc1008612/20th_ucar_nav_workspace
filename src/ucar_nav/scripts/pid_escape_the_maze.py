@@ -147,7 +147,6 @@ def rotate(angle_radians):
 
         if abs(error) < config['err']:
             break
-        rate.sleep()
 
     create_twist_message(angular_speed=0)
     rospy.loginfo("Rotation completed")
@@ -248,7 +247,6 @@ def move(distance,  target_angle_radians=0,direction='forward', angle_error_thre
             break
 
         # 按照设置的频率休眠
-        rate.sleep()
 
     # 停止移动
     vel_msg = create_twist_message()
@@ -392,7 +390,6 @@ def keep_distance(direction='forward', safe_distance=0.25, threshold=1):
         rospy.loginfo(f"Keep distance {direction}: Safe Distance {safe_distance:.2f}m, Threshold {threshold:.2f}m")
         if vel_msg.linear.x == 0 and vel_msg.linear.y == 0:
             break
-        rate.sleep()
 
 if __name__ == '__main__':
     try:
@@ -417,7 +414,8 @@ if __name__ == '__main__':
         move(0.6,target_angle_radians=math.radians(180))
 
         #识别点
-        rospy.sleep(rospy.Duration(3))
+        rospy.set_param('take_photo',1)
+        while(rospy.get_param('take_photo',0)==1):pass
 
         keep_distance('left',0.25)
         rotate(align_to_angle(math.radians(180)))
@@ -448,6 +446,9 @@ if __name__ == '__main__':
         keep_distance('left',0.25)
         rotate(align_to_angle(math.radians(90)))
         keep_distance('left',0.25)
+
+        #出终点口
+        move(0.5,target_angle_radians=math.radians(90))
 
         rospy.set_param('pid_end', 1)
     except rospy.ROSInterruptException:
